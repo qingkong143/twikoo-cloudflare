@@ -54,56 +54,90 @@ setCustomLibs({
   },
 
   nodemailer: {
-    createTransport (config) {
+  createTransport(config) {
+    // 通用校验
+    if (!config.auth || !config.auth.user) {
+      throw new Error('需要在 SMTP_USER 中配置账户名，如果邮件服务不需要可随意填写。')
+    }
+    if (!config.auth || !config.auth.pass) {
+      throw new Error('需要在 SMTP_PASS 中配置 API 令牌。')
+    }
+
+    // 根据服务类型返回 transport 对象
+    if (config.service && config.service.toLowerCase() === 'resend') {
+      // 使用 Resend API
       return {
-        verify () {
-          if (!config.service || (config.service.toLowerCase() !== 'sendgrid' && config.service.toLowerCase() !== 'mailchannels')) {
-            throw new Error('仅支持 SendGrid 和 MailChannels 邮件服务。')
-          }
-          if (!config.auth || !config.auth.user) {
-            throw new Error('需要在 SMTP_USER 中配置账户名，如果邮件服务不需要可随意填写。')
-          }
-          if (!config.auth || !config.auth.pass) {
-            throw new Error('需要在 SMTP_PASS 中配置 API 令牌。')
-          }
+        verify() {
           return true
         },
+        sendMail({ from, to, subject, html }) {
+          return fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${config.auth.pass}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: from,
+              to: [to],
+              subject: subject,
+              html: html,
+            }),
+          }).then(async (resp) => {
+            if (!resp.ok) {
+              const error = await resp.text()
+              throw new Error(`Resend API 错误: ${resp.status} ${error}`)
+            }
+            return resp
+          })
+        }
+      }
+    }
 
-        sendMail ({ from, to, subject, html }) {
-          if (config.service.toLowerCase() === 'sendgrid') {
-            return fetch('https://api.sendgrid.com/v3/mail/send', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${config.auth.pass}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                personalizations: [{ to: [{ email: to }] }],
-                from: { email: from },
-                subject,
-                content: [{ type: 'text/html', value: html }],
-              })
+    // 原有 SendGrid / MailChannels 逻辑保持不变
+    if (!config.service || (config.service.toLowerCase() !== 'sendgrid' && config.service.toLowerCase() !== 'mailchannels')) {
+      throw new Error('仅支持 SendGrid、MailChannels 或 Resend 邮件服务。')
+    }
+
+    return {
+      verify() {
+        return true
+      },
+      sendMail({ from, to, subject, html }) {
+        if (config.service.toLowerCase() === 'sendgrid') {
+          return fetch('https://api.sendgrid.com/v3/mail/send', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${config.auth.pass}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              personalizations: [{ to: [{ email: to }] }],
+              from: { email: from },
+              subject,
+              content: [{ type: 'text/html', value: html }],
             })
-          } else if (config.service.toLowerCase() === 'mailchannels') {
-            return fetch('https://api.mailchannels.net/tx/v1/send', {
-              method: 'POST',
-              headers: {
-                'X-Api-Key': config.auth.pass,
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                personalizations: [{ to: [{ email: to }] }],
-                from: { email: from },
-                subject,
-                content: [{ type: 'text/html', value: html }],
-              })
+          })
+        } else if (config.service.toLowerCase() === 'mailchannels') {
+          return fetch('https://api.mailchannels.net/tx/v1/send', {
+            method: 'POST',
+            headers: {
+              'X-Api-Key': config.auth.pass,
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              personalizations: [{ to: [{ email: to }] }],
+              from: { email: from },
+              subject,
+              content: [{ type: 'text/html', value: html }],
             })
-          }
+          })
         }
       }
     }
   }
+}
 })
 
 const $ = getCheerio()
